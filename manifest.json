@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Phishield — Link Scanner",
+  "version": "1.0.0",
+  "description": "Scan the current page or a URL for phishing risk using Phishield.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "logo.svg"
+    }
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"]
+}
+{
+  "name": "Phishield",
+  "short_name": "Phishield",
+  "description": "Client-side anti-phishing scanner — Phishield.RLJ.com",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071827",
+  "theme_color": "#071827",
+  "icons": [
+    {
+      "src": "logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Phishield Scanner</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <img src="logo.svg" alt="RLJ" class="logo">
+      <h1>Phishield</h1>
+    </header>
+
+    <main>
+      <div class="controls">
+        <button id="scanTab" class="btn primary">Scan Current Tab</button>
+        <div class="or">or</div>
+        <input id="urlInput" placeholder="Enter URL to scan" />
+        <div class="actions">
+          <button id="scanBtn" class="btn">Scan URL</button>
+          <button id="clearBtn" class="btn">Clear</button>
+          <button id="openBtn" class="btn">Open</button>
+          <button id="reportBtn" class="btn">Report</button>
+        </div>
+      </div>
+
+      <section id="result" class="result">
+        <h3 id="verdict">No scan yet</h3>
+        <div id="details" class="details"></div>
+        <div id="meta" class="meta"></div>
+      </section>
+
+      <section class="config">
+        <label>Server API endpoint (optional)</label>
+        <input id="apiEndpoint" placeholder="https://phishield-server.example.com/api/scan">
+        <button id="saveApi" class="btn">Save</button>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <meta name="description" content="Phishield — client-side anti-phishing scanner">
+        <title>Phishield — Anti‑Phishing Scanner</title>
+        <link rel="icon" href="logo.svg" type="image/svg+xml">
+        <link rel="manifest" href="manifest.json">
+        <meta name="theme-color" content="#071827">
+        <!-- API endpoint for server scans; set at build time or leave as default '/api/scan' -->
+        <meta name="phishield-api" content="/api/scan">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <header class="top">
+            <img src="logo.svg" alt="Phishield RLJ logo" class="logo">
+            <div class="brand">
+                <h1>Phishield</h1>
+                <p class="tag">Security Wall — Safe browsing on any device</p>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                <button id="founderBtn" class="btn">Founder</button>
+            </div>
+        </header>
+
+        <main class="container">
+            <section class="hero">
+                <h2>Scan a URL for phishing risk</h2>
+                <form id="scanForm" class="scan-form">
+                    <input id="urlInput" type="url" placeholder="Enter URL or domain (e.g. https://example.com)" required>
+                    <div class="actions">
+                        <button type="submit" class="btn primary">Scan</button>
+                        <button type="button" id="clearBtn" class="btn">Clear</button>
+                        <button type="button" id="guidelinesBtn" class="btn">Guidelines</button>
+                        <button type="button" id="aboutBtn" class="btn">About</button>
+                    </div>
+                </form>
+            </section>
+
+            <section id="result" class="result" aria-live="polite">
+                <h3 id="verdict">No scan yet</h3>
+                <div id="details" class="details"></div>
+                <div id="meta" class="meta"></div>
+                                <div id="guidance" class="guidance" aria-live="polite"></div>
+                                <div id="examples" class="examples"></div>
+                                <div id="confidence" style="margin-top:10px"></div>
+                                <div id="oneclick" style="margin-top:10px"></div>
+                                <div id="sandboxPreview" style="margin-top:10px"></div>
+                                <div style="margin-top:10px;display:flex;gap:8px">
+                                    <button id="exportBtn" class="btn">Export JSON</button>
+                                    <button id="clearHistoryBtn" class="btn">Clear History</button>
+                                </div>
+            </section>
+
+            <!-- Guidelines and About content moved into templates so the UI shows only buttons -->
+            <template id="guidelinesTpl">
+                <h4>How to use & Guidelines</h4>
+                <p>Enter any URL or domain into the box above and press <strong>Scan</strong>. Phishield runs client-side heuristics and displays a verdict with reasons and a safety score.</p>
+                <h5>Quick rules to determine link safety</h5>
+                <ul>
+                    <li><strong>Fake:</strong> Lookalike domains using subtle typos, extra subdomains, or punycode (IDN). Example: paypa1.com vs paypal.com.</li>
+                    <li><strong>Scam:</strong> URLs with IP addresses, long query strings, or credential redirect patterns (contains '@') are often scams.</li>
+                    <li><strong>Not proper/Unsafe:</strong> Missing HTTPS, suspicious TLDs (.tk, .ml), or very long/obfuscated hostnames.</li>
+                </ul>
+                <h5>Best practices</h5>
+                <ol>
+                    <li>Never enter passwords or 2FA codes on sites you didn't navigate to deliberately.</li>
+                    <li>When in doubt, access the site directly from a known bookmark or search engine.</li>
+                    <li>If a link was sent unexpectedly, verify with the sender through another channel.</li>
+                </ol>
+                <p class="muted">Phishield provides guidance only — do not rely on it as sole protection.</p>
+            </template>
+
+            <template id="aboutTpl">
+                <h4>About Phishield</h4>
+                <p>Phishield (Phishield.RLJ.com) provides a client-side security wall that detects common phishing indicators without sending your URL to external services. It's designed to run in any browser and on any device.</p>
+            </template>
+        </main>
+
+        <footer class="footer">
+            <small>Phishield — RLJ • Domain: Phishield.RLJ.com • For educational/demo use only</small>
+        </footer>
+
+        <script>
+            // Runtime override for server API endpoint (Option A)
+            // Replace the URL below with your deployed server's scan endpoint.
+            // Default to same origin API so the site is fully usable when served locally.
+            try { window.__PHISHIELD_API_URL__ = window.location.origin + '/api/scan'; } catch(e) { window.__PHISHIELD_API_URL__ = '/api/scan'; }
+        </script>
+                <!-- Confirmation modal for risky links -->
+                <div id="confirmModal" class="modal" style="display:none">
+                    <div class="modal-content">
+                        <h3>Risky site — confirm to proceed</h3>
+                        <p id="confirmMsg">This site was flagged as risky. To proceed, type the domain name exactly.</p>
+                        <p><input id="confirmInput" placeholder="type domain.example.com to confirm"></p>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+                            <button id="confirmCancel" class="btn">Cancel</button>
+                            <button id="confirmProceed" class="btn primary" disabled>Proceed</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Info modal for Guidelines / About -->
+                <div id="infoModal" class="modal" style="display:none">
+                    <div class="modal-content">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <h3 id="infoTitle">Info</h3>
+                            <button id="infoClose" class="btn">Close</button>
+                        </div>
+                        <!-- Settings modal -->
+                        <div id="settingsModal" class="modal" style="display:none">
+                            <div class="modal-content">
+                                <div style="display:flex;justify-content:space-between;align-items:center">
+                                    <h3>Settings</h3>
+                                    <button id="settingsClose" class="btn">Close</button>
+                                </div>
+                                <div style="margin-top:10px">
+                                    <label>Server API endpoint</label>
+                                    <input id="settingsApi" style="width:100%;margin-top:6px" placeholder="https://phishield-server.example.com/api/scan">
+                                    <label style="margin-top:10px;display:block">Enable sandboxing</label>
+                                    <input type="checkbox" id="settingsSandbox">
+                                    <label style="margin-top:8px;display:block">Require strict confirmation for risky</label>
+                                    <input type="checkbox" id="settingsStrictConfirm">
+                                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+                                        <button id="settingsSave" class="btn primary">Save</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="infoBody" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
+                    </div>
+                </div>
+                <!-- Founder modal -->
+                <div id="founderModal" class="modal" style="display:none">
+                    <div class="modal-content">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <h3>Founders</h3>
+                            <button id="founderClose" class="btn">Close</button>
+                        </div>
+                        <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
+                            <div>
+                                <div style="font-weight:700">Ronald Biscarra</div>
+                                <div class="muted">Founder & Creator — Phishield</div>
+                            </div>
+                            <div>
+                                <div style="font-weight:700">Leodel Luna</div>
+                                <div class="muted">Co-founder</div>
+                            </div>
+                            <div>
+                                <div style="font-weight:700">Josh Bryan Toyado</div>
+                                <div class="muted">Co-founder</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        <script src="script.js"></script>
+    </body>
+    </html>
