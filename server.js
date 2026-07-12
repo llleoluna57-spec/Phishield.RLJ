@@ -15,6 +15,48 @@ const port = process.env.PORT || 3000;
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
+
+async function resolveRedirects(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD', redirect: 'follow', timeout: 5000 });
+    if (response && response.url) return response.url;
+    const fallback = await fetch(url, { method: 'GET', redirect: 'follow', timeout: 7000 });
+    return fallback && fallback.url ? fallback.url : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function backendProbeUrl(url) {
+  try {
+    let response = await fetch(url, { method: 'HEAD', redirect: 'follow', timeout: 7000 });
+    if (response.status === 405 || response.status === 501 || response.status === 403) {
+      response = await fetch(url, { method: 'GET', redirect: 'follow', timeout: 10000 });
+    }
+    const finalUrl = response.url || url;
+    const reachable = response.ok || (response.status >= 200 && response.status < 400);
+    return {
+      originalUrl: url,
+      finalUrl,
+      redirected: finalUrl !== url,
+      reachable,
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        'content-type': response.headers.get('content-type') || ''
+      }
+    };
+  } catch (err) {
+    return {
+      originalUrl: url,
+      finalUrl: url,
+      redirected: false,
+      reachable: false,
+      error: err.message || 'Probe request failed.'
+    };
+  }
+}
+
 // Blocklist management
 let blocklist = new Set();
 let blocklistUpdated = null;
@@ -187,6 +229,69 @@ async function whoisCheck(host) {
   }
 }
 
+function isOfficialDomain(host) {
+  const official = ['google.com','facebook.com','apple.com','amazon.com','microsoft.com','paypal.com','github.com','linkedin.com','twitter.com','instagram.com'];
+  return official.some(d => host === d || host.endsWith('.' + d));
+}
+
+function heuristicScan(url, parsed) {
+  const host = (parsed.hostname || '').toLowerCase();
+  const path = (parsed.pathname || '') + (parsed.search || '') + (parsed.hash || '');
+  const issues = [];
+  const lowerUrl = url.toLowerCase();
+  const suspiciousWords = ['login','secure','account','update','verify','bank','signin','confirm','password','mail','reset','auth'];
+  const suspiciousPatterns = ['0','1','vv','rn','paypa','googl','faceb','micros','apple','amaz0n'];
+  const parts = host.split('.').filter(Boolean);
+  const subdomainCount = Math.max(0, parts.length - 2);
+
+  if (host.includes('xn--')) issues.push('Punycode detected.');
+  if (/[?&](url|redirect|next|destination)=/.test(lowerUrl)) issues.push('Hidden redirect parameter detected.');
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) issues.push('IP address used instead of a normal hostname.');
+  if (subdomainCount > 3) issues.push('Many subdomains present; may be deceptive.');
+  if (url.length > 120) issues.push('Very long URL; often used for phishing.');
+  if (host.includes('-') && !isOfficialDomain(host)) issues.push('Hyphenated hostname may be lookalike or suspicious.');
+  suspiciousWords.forEach(word => {
+    if (host.includes(word) || path.toLowerCase().includes(word)) issues.push('Phishing keyword detected: ' + word + '.');
+  });
+  if (!isOfficialDomain(host)) {
+    for (const token of suspiciousPatterns) {
+      if (host.includes(token)) {
+        issues.push('Potential lookalike pattern detected: ' + token + '.');
+        break;
+      }
+    }
+  }
+
+  if (issues.length === 0) {
+    return { status: 'SAFE', reason: 'No structural anomalies detected.', issues };
+  }
+
+  const dangerousSignals = issues.some(issue => /Punycode|IP address|Hidden redirect|lookalike|phishing keyword/i.test(issue));
+  return {
+    status: dangerousSignals ? 'DANGEROUS' : 'SUSPICIOUS',
+    reason: issues.join(' '),
+    issues
+  };
+}
+
+function computeOverallStatus(results, host, path) {
+  const heuristic = results.heuristic || { status: 'SAFE', reason: 'No structural issues detected.' };
+  const gsbDanger = results.gsb && results.gsb.result && results.gsb.result.matches;
+  const vtDanger = results.virustotal && results.virustotal.result && results.virustotal.result.stats && results.virustotal.result.stats.malicious > 0;
+  const blocked = !!results.blocklist;
+  const tlsExpired = results.tls && results.tls.cert && results.tls.cert.expired;
+  const youngDomain = results.whois && typeof results.whois.ageDays === 'number' && results.whois.ageDays < 30;
+
+  if (gsbDanger) return { status: 'DANGEROUS', reason: 'Flagged by Google Safe Browsing.' };
+  if (vtDanger) return { status: 'DANGEROUS', reason: 'Detected as malicious by VirusTotal.' };
+  if (blocked) return { status: 'DANGEROUS', reason: 'Found on an active blocklist.' };
+  if (heuristic.status === 'DANGEROUS') return { status: 'DANGEROUS', reason: heuristic.reason };
+  if (heuristic.status === 'SUSPICIOUS') return { status: 'SUSPICIOUS', reason: heuristic.reason };
+  if (tlsExpired) return { status: 'SUSPICIOUS', reason: 'TLS certificate expired or invalid.' };
+  if (youngDomain) return { status: 'SUSPICIOUS', reason: 'Recently registered domain.' };
+  return { status: 'SAFE', reason: 'No major threats detected.' };
+}
+
   function charEntropy(s) {
     const counts = {};
     for (const ch of s) counts[ch] = (counts[ch] || 0) + 1;
@@ -247,15 +352,31 @@ async function whoisCheck(host) {
 app.post('/api/scan', async (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.status(400).json({ error: 'missing url' });
+
+  const originalUrl = url;
+  let finalUrl = originalUrl;
+  let redirected = false;
+  let redirectError = null;
+
+  try {
+    const resolved = await resolveRedirects(originalUrl);
+    if (resolved && resolved !== originalUrl) {
+      finalUrl = resolved;
+      redirected = true;
+    }
+  } catch (err) {
+    redirectError = err.message || 'redirect resolution failed';
+  }
+
   let parsed;
-  try { parsed = new URL(url); } catch (e) { return res.status(400).json({ error: 'invalid_url' }); }
+  try { parsed = new URL(finalUrl); } catch (e) { return res.status(400).json({ error: 'invalid_url', message: e.message }); }
   const host = parsed.hostname;
 
   const results = {};
   // GSB
-  try { results.gsb = await gsbCheck(url); } catch (e) { results.gsb = { error: e.message }; }
+  try { results.gsb = await gsbCheck(finalUrl); } catch (e) { results.gsb = { error: e.message }; }
   // VirusTotal
-  try { results.virustotal = await virusTotalCheck(url); } catch (e) { results.virustotal = { error: e.message }; }
+  try { results.virustotal = await virusTotalCheck(finalUrl); } catch (e) { results.virustotal = { error: e.message }; }
   // TLS / cert
   try { results.tls = await checkTLS(host, parsed.port || 443); } catch (e) { results.tls = { error: e.message }; }
   // WHOIS
@@ -267,18 +388,38 @@ app.post('/api/scan', async (req, res) => {
   try {
     if (blocklist.has(host.toLowerCase())) { verdicts.push('blocklist'); results.blocklist = true; } else { results.blocklist = false; }
   } catch (e) {}
+
+  results.originalUrl = originalUrl;
+  results.finalUrl = finalUrl;
+  results.redirected = redirected;
+  if (redirectError) results.redirectError = redirectError;
+  results.heuristic = heuristicScan(finalUrl, parsed);
   if (results.gsb && results.gsb.result && results.gsb.result.matches) verdicts.push('gsb_malicious');
   if (results.virustotal && results.virustotal.result && results.virustotal.result.stats && results.virustotal.result.stats.malicious > 0) verdicts.push('vt_malicious');
   if (results.tls && results.tls.cert && results.tls.cert.expired) verdicts.push('tls_expired');
   if (results.whois && results.whois.ageDays !== null && results.whois.ageDays < 30) verdicts.push('young_domain');
+  if (results.heuristic && results.heuristic.status === 'DANGEROUS') verdicts.push('heuristic_dangerous');
+  if (results.heuristic && results.heuristic.status === 'SUSPICIOUS') verdicts.push('heuristic_suspicious');
 
   // ensemble scoring
   try {
     const ensemble = ensembleScore({ results, host, path: parsed.pathname + parsed.search + parsed.hash });
-    return res.json({ provider: 'aggregator', verdicts, ensemble, details: results });
+    const summary = computeOverallStatus(results, host, parsed.pathname + parsed.search + parsed.hash);
+    return res.json({ provider: 'aggregator', verdicts, ensemble, summary, redirected, resolvedUrl: finalUrl, details: results });
   } catch (e) {
-    return res.json({ provider: 'aggregator', verdicts, details: results });
+    const summary = computeOverallStatus(results, host, parsed.pathname + parsed.search + parsed.hash);
+    return res.json({ provider: 'aggregator', verdicts, summary, redirected, resolvedUrl: finalUrl, details: results });
   }
+});
+
+app.post('/api/probe', async (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'missing url' });
+  let parsed;
+  try { parsed = new URL(url); } catch (e) { return res.status(400).json({ error: 'invalid_url', message: e.message }); }
+
+  const probe = await backendProbeUrl(parsed.href);
+  return res.json(probe);
 });
 
 // Sandbox rendering endpoint - loads the page in a headless browser and reports behavior indicators.

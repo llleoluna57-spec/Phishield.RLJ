@@ -2,6 +2,7 @@
 const suspiciousTLDs = ['tk','ml','ga','cf','gq','zip','review','kim'];
 const phishingWords = ['login','secure','account','update','verify','bank','signin','confirm'];
 const localBlocklist = ['malicious.example', 'phishingsite.test'];
+const officialWhitelist = ['google.com','facebook.com','apple.com','amazon.com','microsoft.com','paypal.com','github.com','linkedin.com','twitter.com','instagram.com'];
 
 // Configurable server API endpoint. Priority:
 // 1) window.__PHISHIELD_API_URL__ (set at build/runtime)
@@ -26,74 +27,132 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-function analyzeURL(raw) {
-  try {
-    let input = raw.trim();
-    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) {
-      input = 'http://' + input;
-    }
-    const url = new URL(input);
-    const host = url.hostname;
-    const issues = [];
+function isUrlSyntaxValid(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return false;
 
-    if (/@/.test(raw)) issues.push('Contains an @ sign (credential redirection trick)');
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) issues.push('Hostname is an IP address');
-    if (host.includes('xn--')) issues.push('Punycode in domain (potential IDN homograph)');
+  if (/\s/.test(trimmed)) return false;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    try { new URL(trimmed); return true; } catch (e) { return false; }
+  }
+  try { new URL('http://' + trimmed); return true; } catch (e) { return false; }
+}
+
+function isOfficialDomain(host) {
+  return officialWhitelist.some(d => host === d || host.endsWith('.' + d));
+}
+
+function hasHiddenRedirect(raw) {
+  const normal = raw.toLowerCase();
+  return /@/.test(normal) || /[?&](url|redirect|next|destination)=/.test(normal) || /\/redirect\//.test(normal);
+}
+
+function analyzeURL(raw) {
+  const issues = [];
+  const result = {
+    verdict: 'INVALID',
+    status: 'invalid',
+    issues,
+    score: 0,
+    category: 'Other',
+    normalized: raw,
+    host: '',
+    path: ''
+  };
+
+  if (!isUrlSyntaxValid(raw)) {
+    issues.push('The input is not a valid URL format.');
+    return result;
+  }
+
+  let input = raw.trim();
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) {
+    input = 'http://' + input;
+  }
+
+  try {
+    const url = new URL(input);
+    result.normalized = url.href;
+    result.host = url.hostname;
+    result.path = url.pathname + url.search + url.hash;
+    const host = url.hostname;
     const parts = host.split('.').filter(Boolean);
     const tld = parts.length ? parts[parts.length - 1].toLowerCase() : '';
-    if (suspiciousTLDs.includes(tld)) issues.push('Uses a high-risk / free TLD: .' + tld);
-    // local blocklist check
-    if (localBlocklist.includes(host)) issues.push('Domain appears on local blocklist');
-    // entropy check for randomized domains
-    const entropy = sha1Entropy(host);
-    if (entropy > 3.8) issues.push('Hostname has high entropy (likely auto-generated): ' + entropy.toFixed(2));
-    // suspicious port
-    if (url.port && url.port !== '' && !['80','443'].includes(url.port)) issues.push('Non-standard port detected: ' + url.port);
-    // check for phishing keywords in path or query
-    const path = url.pathname + url.search + url.hash;
-    for (const w of phishingWords) if (path.toLowerCase().includes(w)) issues.push('Contains phishing keyword: ' + w);
-    if (parts.length >= 4) issues.push('Many subdomains — possible lookalike');
-    if (host.length > 60) issues.push('Very long hostname');
-    if (raw.length > 200) issues.push('Very long URL');
-    if (host.includes('-')) issues.push('Hyphen in domain (commonly used by phishing domains)');
-    if (url.protocol !== 'https:') issues.push('Site does not use HTTPS');
+    const domainOnly = parts.slice(-2).join('.').toLowerCase();
 
-    // lookalike detection vs popular brands (small sample list)
-    const known = ['paypal','google','facebook','microsoft','apple','amazon','bank'];
-    const domainOnly = parts.slice(-2).join('.');
-    const label = parts.length?parts[parts.length-2]||parts[0]:host;
+    if (!parts.length || parts.length < 2) {
+      issues.push('Hostname does not contain a valid domain.');
+      return result;
+    }
+    if (localBlocklist.includes(host) || localBlocklist.includes(domainOnly)) {
+      issues.push('Domain appears on a known blocklist.');
+    }
+    if (suspiciousTLDs.includes(tld) && !isOfficialDomain(host)) {
+      issues.push('Uses a high-risk top-level domain: .' + tld);
+    }
+    if (host.includes('xn--')) {
+      issues.push('Punycode detected; possible homograph attack.');
+    }
+    if (hasHiddenRedirect(raw)) {
+      issues.push('Hidden redirect pattern detected.');
+    }
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+      issues.push('Hostname is an IP address.');
+    }
+    if (host.includes('-')) {
+      issues.push('Hyphen in domain may indicate a lookalike/personalized address.');
+    }
+    for (const w of phishingWords) {
+      if (host.toLowerCase().includes(w) || result.path.toLowerCase().includes(w)) {
+        issues.push('Phishing keyword detected: ' + w);
+      }
+    }
+    if (parts.length >= 4) {
+      issues.push('Many subdomains present; could be deceptive.');
+    }
+    if (host.length > 60) {
+      issues.push('Hostname is unusually long.');
+    }
+    if (result.path.length > 200) {
+      issues.push('URL is unusually long.');
+    }
+    const known = ['paypal','google','facebook','microsoft','apple','amazon','bank','github','linkedin','twitter','instagram'];
+    const label = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
     for (const k of known) {
       const dist = levenshtein(label.toLowerCase(), k.toLowerCase());
-      if (dist > 0 && dist <= 2) issues.push('Lookalike domain similar to "' + k + '"');
+      if (dist > 0 && dist <= 2 && !host.includes(k)) {
+        issues.push('Lookalike domain similar to "' + k + '".');
+        break;
+      }
+    }
+    if (url.protocol !== 'https:') {
+      issues.push('The link does not use HTTPS.');
     }
 
-    // simple scoring
-    let score = 100;
-    score -= Math.min(75, issues.length * 25);
-    if (score < 0) score = 0;
+    const score = Math.max(0, 100 - issues.length * 20);
+    result.score = score;
+    result.category = classifyURL(url, raw);
 
-    // Map verdicts to clearer categories
-    let verdict = 'Safe';
-    if (issues.length >= 4) verdict = 'Fake/Scam';
-    else if (issues.length >= 2) verdict = 'Suspicious';
+    // Determine final classification
+    if (issues.length === 0 && url.protocol === 'https:' && isOfficialDomain(host)) {
+      result.status = 'valid';
+      result.verdict = 'VALID';
+    } else if (issues.some(i => i.includes('blocklist') || i.includes('homograph') || i.includes('Hidden redirect') || i.includes('lookalike') || i.includes('Phishing keyword') || i.includes('high-risk'))) {
+      result.status = 'dangerous';
+      result.verdict = 'DANGEROUS';
+    } else if (issues.length > 0) {
+      result.status = 'dangerous';
+      result.verdict = 'DANGEROUS';
+    } else {
+      result.status = 'valid';
+      result.verdict = 'VALID';
+    }
 
-    const category = classifyURL(url, raw);
-
-    return {
-      verdict,
-      issues,
-      score,
-      category,
-      normalized: url.href,
-      host,
-      path
-    };
+    return result;
   } catch (err) {
-    return {
-      verdict: 'Invalid',
-      issues: [err.message],
-      score: 0
-    };
+    issues.push(err.message);
+    return result;
   }
 }
 
@@ -151,9 +210,9 @@ function renderResult(res) {
 
   const badge = document.createElement('span');
   let cls = 'invalid';
-  if (res.verdict === 'Safe') cls = 'valid';
-  else if (res.verdict === 'Suspicious') cls = 'suspicious';
-  else if (res.verdict === 'Fake/Scam') cls = 'dangerous';
+  if (res.verdict === 'VALID') cls = 'valid';
+  else if (res.verdict === 'DANGEROUS') cls = 'dangerous';
+  else cls = 'invalid';
   badge.className = 'status-bubble ' + cls;
   badge.textContent = res.verdict;
 
@@ -172,8 +231,8 @@ function renderResult(res) {
     explain.className = 'explain';
     explain.textContent = 'Tip: Review the listed issues; multiple indicators increase risk.';
     detailsEl.appendChild(explain);
-  } else if (res.verdict === 'Valid') {
-    detailsEl.textContent = 'No common phishing indicators detected.';
+  } else if (res.verdict === 'VALID') {
+    detailsEl.textContent = 'The link is syntactically valid, secure, and not flagged by heuristics.';
   }
 
   if (res.normalized) {
@@ -198,17 +257,16 @@ function renderResult(res) {
 
   // Guidance text and examples
   guidanceEl.innerHTML = '';
-  examplesEl.innerHTML = '';
+  if (examplesEl) examplesEl.innerHTML = '';
   const guidanceMap = {
-    'Safe': { label: 'Safe to open', advice: 'No common indicators found. Proceed with normal caution.' },
-    'Suspicious': { label: 'Be cautious', advice: 'One or two indicators detected — review the details and avoid entering credentials.' },
-    'Fake/Scam': { label: 'Do NOT click', advice: 'Multiple indicators suggest phishing or scam. Do not open or enter credentials.' },
-    'Invalid': { label: 'Invalid input', advice: 'The provided text could not be parsed as a URL.' }
+    'VALID': { label: 'VALID', advice: 'The link looks safe, secure, and belongs to a legitimate domain.' },
+    'DANGEROUS': { label: 'DANGEROUS', advice: 'The link appears malicious or deceptive. Do not open it.' },
+    'INVALID': { label: 'INVALID', advice: 'The input couldn\'t be parsed or the link appears broken/unreachable.' }
   };
 
   const g = guidanceMap[res.verdict] || { label: res.verdict, advice: '' };
   const gTitle = document.createElement('div');
-  gTitle.className = 'status-bubble ' + (res.verdict === 'Safe' ? 'valid' : res.verdict === 'Suspicious' ? 'suspicious' : res.verdict === 'Fake/Scam' ? 'dangerous' : 'invalid');
+  gTitle.className = 'status-bubble ' + (res.verdict === 'VALID' ? 'valid' : res.verdict === 'DANGEROUS' ? 'dangerous' : 'invalid');
   gTitle.textContent = g.label;
   guidanceEl.appendChild(gTitle);
   const gText = document.createElement('div');
@@ -216,38 +274,8 @@ function renderResult(res) {
   gText.textContent = g.advice;
   guidanceEl.appendChild(gText);
 
-  // Example links for user education
-  const examples = {
-    'Safe': ['https://example.com', 'https://phishield.rlj.com/about'],
-    'Suspicious': ['http://login-example.tk/account', 'http://192.0.2.123/verify'],
-    'Fake/Scam': ['http://paypal-secure-login-paypal.com', 'http://xn--ppal-4ve.com'],
-    'Invalid': ['not a url', 'htp://missing']
-  };
-  const ex = examples[res.verdict] || [];
-  if (ex.length) {
-    const exHead = document.createElement('div');
-    exHead.style.marginTop = '8px';
-    exHead.style.fontSize = '13px';
-    exHead.style.color = 'var(--muted)';
-    exHead.textContent = 'Example links (click to autofill and scan):';
-    examplesEl.appendChild(exHead);
-    const wrap = document.createElement('div');
-    wrap.className = 'example-list';
-    for (const u of ex) {
-      const btn = document.createElement('button');
-      btn.className = 'example-btn';
-      btn.textContent = u;
-      btn.onclick = () => {
-        const inputEl = document.getElementById('urlInput');
-        inputEl.value = u;
-        const submit = document.querySelector('#scanForm button[type="submit"]');
-        if (submit) submit.click();
-        else document.getElementById('scanForm').dispatchEvent(new Event('submit', { cancelable: true }));
-      };
-      wrap.appendChild(btn);
-    }
-    examplesEl.appendChild(wrap);
-  }
+  // Example links removed per request
+  if (examplesEl) examplesEl.innerHTML = '';
 
   // Actions
   const actions = document.createElement('div');
@@ -259,18 +287,36 @@ function renderResult(res) {
 
   const openBtn = document.createElement('button');
   openBtn.className = 'btn';
-  openBtn.textContent = 'Open (use caution)';
+  openBtn.textContent = 'Open Directly (use caution)';
   openBtn.onclick = async () => {
     const url = document.getElementById('urlInput').value;
     if (!url) return;
     const host = res.host || (() => { try { return (new URL(url)).hostname } catch(e){ return '' } })();
-    if (res.verdict === 'Suspicious' || res.verdict === 'Fake/Scam') {
+    if (res.verdict === 'DANGEROUS') {
       const ok = await requireConfirmation(host);
       if (!ok) return alert('Proceed canceled.');
-    } else {
-      // minor confirmation for all non-safe categories could be added here
+    } else if (res.verdict === 'INVALID') {
+      return alert('This link is invalid or broken; do not open it.');
     }
     window.open(url, '_blank', 'noopener');
+  };
+
+  const sandboxOpenBtn = document.createElement('button');
+  sandboxOpenBtn.className = 'btn';
+  sandboxOpenBtn.textContent = 'Play in Secure Sandbox';
+  sandboxOpenBtn.style.marginLeft = '8px';
+  sandboxOpenBtn.onclick = async () => {
+    const url = document.getElementById('urlInput').value;
+    if (!url) return;
+    const host = res.host || (() => { try { return (new URL(url)).hostname } catch(e){ return '' } })();
+    if (res.verdict === 'INVALID') {
+      return alert('This link is invalid or broken; do not open it.');
+    }
+    if (res.verdict === 'DANGEROUS') {
+      const ok = await requireConfirmation(host);
+      if (!ok) return alert('Sandbox preview canceled.');
+    }
+    openLinkInSandbox(url);
   };
 
   const reportBtn = document.createElement('button');
@@ -289,6 +335,7 @@ function renderResult(res) {
 
   actions.appendChild(copyBtn);
   actions.appendChild(openBtn);
+  actions.appendChild(sandboxOpenBtn);
   actions.appendChild(reportBtn);
   metaEl.appendChild(actions);
 }
@@ -367,12 +414,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }).then(r => r.json()).then(j => {
       if (!j) return;
       const metaEl = document.getElementById('meta');
+      const securitySummaryEl = document.getElementById('securitySummary');
+      if (securitySummaryEl) securitySummaryEl.innerHTML = '';
       const srv = document.createElement('div');
       srv.style.marginTop = '8px';
       srv.style.fontSize = '13px';
       srv.style.color = 'var(--muted)';
       if (j.provider === 'aggregator') {
-        srv.innerHTML = '<strong>Server scan summary:</strong> ' + (j.verdicts && j.verdicts.length ? j.verdicts.join(', ') : 'no issues');
+        const summaryText = j.summary && j.summary.status ? `${j.summary.status} — ${j.summary.reason || ''}` : (j.verdicts && j.verdicts.length ? j.verdicts.join(', ') : 'no issues');
+        srv.innerHTML = '<strong>Server scan summary:</strong> ' + summaryText;
+        if (j.resolvedUrl && j.resolvedUrl !== val) {
+          const resolved = document.createElement('div');
+          resolved.style.marginTop = '6px';
+          resolved.style.fontSize = '12px';
+          resolved.style.color = 'var(--muted)';
+          resolved.textContent = `Resolved destination: ${j.resolvedUrl}`;
+          srv.appendChild(resolved);
+        }
+        if (j.ensemble) {
+          const ens = document.createElement('div');
+          ens.style.marginTop = '6px';
+          ens.style.fontSize = '12px';
+          ens.style.color = 'var(--muted)';
+          ens.textContent = `Ensemble score: ${j.ensemble.score}/100 (${j.ensemble.verdict})`;
+          srv.appendChild(ens);
+        }
+        if (j.details && j.details.heuristic) {
+          const heur = document.createElement('div');
+          heur.style.marginTop = '6px';
+          heur.style.fontSize = '12px';
+          heur.style.color = 'var(--muted)';
+          heur.textContent = `Heuristic: ${j.details.heuristic.status} — ${j.details.heuristic.reason}`;
+          srv.appendChild(heur);
+        }
         const det = document.createElement('pre');
         det.style.marginTop = '8px';
         det.style.whiteSpace = 'pre-wrap';
@@ -380,6 +454,29 @@ document.addEventListener('DOMContentLoaded', () => {
         det.style.color = 'var(--muted)';
         det.textContent = JSON.stringify(j.details, null, 2);
         srv.appendChild(det);
+
+        if (securitySummaryEl) {
+          const summaryBlock = document.createElement('div');
+          summaryBlock.className = 'security-summary';
+          const rows = [];
+          const statusLabel = j.summary && j.summary.status ? j.summary.status : 'Unknown';
+          rows.push(`<div class="field-row"><span><strong>Security status:</strong> ${statusLabel}</span><span><strong>Reason:</strong> ${j.summary?.reason || 'N/A'}</span></div>`);
+          if (j.resolvedUrl && j.resolvedUrl !== val) {
+            rows.push(`<div class="field-row"><span><strong>Final destination:</strong> ${j.resolvedUrl}</span><span><strong>Redirected:</strong> Yes</span></div>`);
+          } else {
+            rows.push(`<div class="field-row"><span><strong>Final destination:</strong> ${val}</span><span><strong>Redirected:</strong> No</span></div>`);
+          }
+          if (j.details && j.details.virustotal) {
+            const vt = j.details.virustotal;
+            if (vt.result && vt.result.stats) {
+              rows.push(`<div class="field-row"><span><strong>VirusTotal:</strong> ${vt.result.stats.malicious || 0} malicious, ${vt.result.stats.suspicious || 0} suspicious</span><span><strong>Harmless:</strong> ${vt.result.stats.harmless || 0}</span></div>`);
+            } else if (vt.error) {
+              rows.push(`<div class="field-row"><span><strong>VirusTotal:</strong> unavailable</span><span>${vt.error}</span></div>`);
+            }
+          }
+          summaryBlock.innerHTML = rows.join('');
+          securitySummaryEl.appendChild(summaryBlock);
+        }
       } else {
         srv.textContent = 'Server scan: ' + (j.provider || '') + ' — ' + (j.verdict || j.message || JSON.stringify(j));
       }
@@ -392,6 +489,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('verdict').textContent = 'No scan yet';
     document.getElementById('details').innerHTML = '';
     document.getElementById('meta').innerHTML = '';
+    const summary = document.getElementById('securitySummary');
+    if (summary) summary.innerHTML = '';
   });
 
   // Settings modal wiring
@@ -463,6 +562,59 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   renderHistory();
+
+  async function checkLinkReachability(url) {
+    const api = window.__PHISHIELD_API_URL__ || API_ENDPOINT || '/api/scan';
+    const probeEndpoint = api.replace(/\/api\/scan\/?$/, '/api/probe');
+    try {
+      const response = await fetch(probeEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { text: `Proxy probe failed: ${data.error || response.statusText}`, reachable: false };
+      }
+      let text = data.reachable
+        ? 'Backend proxy probe: reachable.'
+        : 'Backend proxy probe: unreachable.';
+      if (data.finalUrl && data.finalUrl !== url) {
+        text += ` Resolved destination: ${data.finalUrl}`;
+      }
+      return { text, reachable: !!data.reachable };
+    } catch (err) {
+      return { text: 'Backend proxy probe failed. Browser-side reachability cannot be verified.', reachable: false };
+    }
+  }
+
+  async function openLinkInSandbox(url) {
+    const settings = JSON.parse(localStorage.getItem('ph_settings') || '{}');
+    const api = settings.api || API_ENDPOINT;
+    if (!api) return alert('No sandbox endpoint configured. Please set an API endpoint in Settings.');
+
+    const sandboxEndpoint = api.replace(/\/api\/scan\/?$/, '/api/sandbox');
+    const preview = document.getElementById('sandboxPreview');
+    if (preview) {
+      preview.innerHTML = '<strong>Secure sandbox:</strong> Sending request to sandbox...';
+    }
+
+    try {
+      const response = await fetch(sandboxEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const json = await response.json();
+      if (preview) {
+        preview.innerHTML = '<strong>Secure sandbox result:</strong><pre style="white-space:pre-wrap;color:var(--muted);font-size:12px">' + JSON.stringify(json, null, 2) + '</pre>';
+      }
+    } catch (err) {
+      if (preview) {
+        preview.innerHTML = '<strong>Secure sandbox failed:</strong> Unable to complete the sandbox request. ' + (err.message || '');
+      }
+    }
+  }
 
   // Sandbox preview trigger
   const sandboxPreview = document.getElementById('sandboxPreview');

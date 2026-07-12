@@ -33,6 +33,10 @@ body{
 .result h3{margin:0 0 8px 0}
 .details{color:var(--muted);font-size:14px}
 .meta{margin-top:8px;font-size:13px;color:var(--muted)}
+.security-summary{margin-top:12px;padding:14px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:var(--muted);font-size:13px;line-height:1.5}
+.security-summary strong{color:#ffffff}
+.security-summary .field-row{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.security-summary .field-row span{display:inline-block;min-width:160px}
 .panel.guidelines{margin-top:18px;padding:14px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.012), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);}
 .panel.guidelines h4{margin:0 0 8px 0}
 .panel.guidelines h5{margin:10px 0 6px 0;font-size:14px}
@@ -60,6 +64,9 @@ body{
 .guidance .status-bubble{font-size:13px;padding:6px 12px}
 .examples{margin-top:8px}
 .example-list{margin:6px 0 0 18px;color:var(--muted)}
+.founder-card{display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px;border-radius:22px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);text-align:center;min-height:360px}
+.founder-avatar{width:220px;height:220px;max-width:100%;aspect-ratio:1/1;border-radius:50%;object-fit:cover;box-shadow:0 24px 40px rgba(0,0,0,0.28);border:3px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.04)}
+.founder-name{font-weight:700;font-size:20px;margin:0}
 .example-list li{margin-bottom:6px}
 
 .example-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}

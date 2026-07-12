@@ -42,12 +42,12 @@
                 <h3 id="verdict">No scan yet</h3>
                 <div id="details" class="details"></div>
                 <div id="meta" class="meta"></div>
-                                <div id="guidance" class="guidance" aria-live="polite"></div>
-                                <div id="examples" class="examples"></div>
-                                <div id="confidence" style="margin-top:10px"></div>
-                                <div id="oneclick" style="margin-top:10px"></div>
-                                <div id="sandboxPreview" style="margin-top:10px"></div>
-                                <div style="margin-top:10px;display:flex;gap:8px">
+                <div id="securitySummary" class="security-summary" aria-live="polite"></div>
+                <div id="guidance" class="guidance" aria-live="polite"></div>
+                <div id="confidence" style="margin-top:10px"></div>
+                <div id="oneclick" style="margin-top:10px"></div>
+                <div id="sandboxPreview" style="margin-top:10px"></div>
+                <div style="margin-top:10px;display:flex;gap:8px">
                                     <button id="exportBtn" class="btn">Export JSON</button>
                                     <button id="clearHistoryBtn" class="btn">Clear History</button>
                                 </div>
@@ -137,18 +137,27 @@
                             <h3>Founders</h3>
                             <button id="founderClose" class="btn">Close</button>
                         </div>
-                        <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
-                            <div>
-                                <div style="font-weight:700">Ronald Biscarra</div>
-                                <div class="muted">Founder & Creator — Phishield</div>
+                        <div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+                            <div class="founder-card">
+                                <img class="founder-avatar" src="images/ronald-biscarra.png" alt="Ronald Biscarra">
+                                <div>
+                                    <div class="founder-name">Ronald Biscarra</div>
+                                    <div class="muted">Founder — Phishield</div>
+                                </div>
                             </div>
-                            <div>
-                                <div style="font-weight:700">Leodel Luna</div>
-                                <div class="muted">Co-founder</div>
+                            <div class="founder-card">
+                                <img class="founder-avatar" src="images/leodel-luna.png" alt="Leodel Luna">
+                                <div>
+                                    <div class="founder-name">Leodel Luna</div>
+                                    <div class="muted">Founder — Phishield</div>
+                                </div>
                             </div>
-                            <div>
-                                <div style="font-weight:700">Josh Bryan Toyado</div>
-                                <div class="muted">Co-founder</div>
+                            <div class="founder-card">
+                                <img class="founder-avatar" src="images/josh-toyado.png" alt="Josh Bryan Toyado">
+                                <div>
+                                    <div class="founder-name">Josh Bryan Toyado</div>
+                                    <div class="muted">Founder — Phishield</div>
+                                </div>
                             </div>
                         </div>
                     </div>
